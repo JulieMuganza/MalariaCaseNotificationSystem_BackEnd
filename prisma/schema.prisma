@@ -1,0 +1,357 @@
+// Malaria Case Notification System — PostgreSQL schema
+// Run: npx prisma migrate dev && npx prisma generate
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CHW
+  HEALTH_CENTER
+  LOCAL_CLINIC
+  HOSPITAL
+  REFERRAL_HOSPITAL
+  ADMIN
+  RICH
+  /// Northern Province — Pro-Femmes Twese Hamwe (severe malaria risk assessment partner)
+  PFTH
+  /// Kigali City — Strive Foundation Rwanda (severe malaria risk assessment partner)
+  SFR
+}
+
+/// First facility tier for a CHW-referred severe case (routes notifications & inbox).
+enum ChwPrimaryReferral {
+  HEALTH_CENTER
+  LOCAL_CLINIC
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  PENDING_VERIFICATION
+}
+
+enum CaseStatus {
+  Pending
+  Referred
+  HC_Received
+  Escalated
+  Admitted
+  Treated
+  Discharged
+  Deceased
+  Resolved
+}
+
+enum PlasmodiumSpecies {
+  Falciparum
+  Malariae
+  Ovale
+  Vivax
+  Knowlesi
+  Not_specified
+}
+
+enum CaseCategory {
+  Index_case
+  Follow_up_case
+}
+
+enum HospitalOutcome {
+  Treated_Discharged
+  Still_Admitted
+  Referred_further
+  Deceased
+}
+
+enum FinalOutcomeHospital {
+  Recovered
+  Deceased
+}
+
+enum ChwReferralTransport {
+  Self
+  With_CHW
+  Ambulance
+}
+
+enum HcReferralTransport {
+  Self
+  With_relative
+  Ambulance
+}
+
+enum SevereMalariaTestResult {
+  Positive
+  Negative
+}
+
+enum NotificationType {
+  alert
+  warning
+  info
+  success
+}
+
+enum NotificationPhase {
+  aller
+  retour
+}
+
+enum ContentLevel {
+  full
+  partial
+}
+
+model User {
+  id            String     @id @default(cuid())
+  email         String     @unique
+  passwordHash  String?
+  name          String
+  role          UserRole
+  district      String
+  status        UserStatus @default(ACTIVE)
+  staffCode     String?
+  emailVerified Boolean    @default(false)
+  /// Admin-created accounts must set a new password after first sign-in (or use the emailed reset link).
+  mustChangePassword Boolean @default(false)
+  /// Hashed 6-digit OTP for self-registration email verification (cleared after verify).
+  emailVerificationOtpHash   String?
+  emailVerificationOtpExpiresAt DateTime?
+  googleId      String?    @unique
+  lastActiveAt  DateTime   @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions          Session[]
+  passwordResets    PasswordResetToken[]
+  reportedCases     Case[]               @relation("CaseReporter")
+  notificationsSeen Notification[]       @relation("NotificationUser")
+
+  @@index([role, district])
+  @@index([email])
+  @@map("users")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  refreshHash  String
+  userAgent    String?
+  ip           String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
+}
+
+/// One timeline row per case event (normalized; API merges into `timeline[]`).
+model CaseTimelineEntry {
+  id        String   @id @default(cuid())
+  caseId    String
+  event     String
+  actorName String
+  actorRole String
+  createdAt DateTime @default(now())
+
+  malariaCase Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, createdAt])
+  @@map("case_timeline_entries")
+}
+
+model Case {
+  id     String @id @default(cuid())
+  caseRef String @unique
+
+  patientName   String
+  patientCode   String
+  patientId     String
+  sex           String
+  dateOfBirth   DateTime
+  age           Int
+  ageGroup      String
+  pregnant      Boolean?
+  breastfeeding Boolean?
+
+  province String @default("Southern Province")
+  district String
+  sector   String
+  cell     String
+  village  String
+  gpsCoordinates String?
+
+  maritalStatus   String
+  familySize      Int
+  educationLevel  String
+  occupation      String
+  economicStatus  String
+  distanceToHC    String
+  transportMode   String
+  hasInsurance    Boolean
+  insuranceType   String?
+
+  nightOutings      Boolean
+  nightOutingHours  String?
+
+  dateFirstSymptom       DateTime
+  timeToSeekCare         String
+  usedTraditionalMedicine Boolean
+  consultedCHW           Boolean
+  consultedCHWDate       DateTime?
+  rdtsAvailable          Boolean
+  consultedHealthPost    Boolean
+  consultedHealthCenter  Boolean
+  consultedHospital      Boolean
+
+  symptoms     String[]
+  symptomCount Int
+  /// Snapshot of CHW-reported severe symptoms at case creation (unchanged when HC updates `symptoms`).
+  chwSymptoms  String[] @default([])
+  /// Rapid test result recorded by CHW before severe-symptom selection (Positive / Negative).
+  chwRapidTestResult String?
+  houseWallStatus String
+  mosquitoEntry   Boolean
+  breedingSites   String[]
+  preventionMeasures String[]
+  llinAge          String?
+  llinSource       String?
+  llinStatus       String?
+  sleepsUnderLLIN  Boolean?
+
+  status CaseStatus
+
+  chwName String
+  chwId   String
+
+  /// CHW chose health center vs local clinic as first receiving facility (district inbox split).
+  chwPrimaryReferral ChwPrimaryReferral @default(HEALTH_CENTER)
+
+  healthCenter String?
+  hospital     String?
+
+  testType          String?
+  plasmodiumSpecies PlasmodiumSpecies?
+  confirmedDate     DateTime?
+  caseCategory      CaseCategory?
+  vulnerabilities   String[]
+
+  /// { "item label": "Compliant" | "Non-compliant" | "N/A" }
+  hospitalChecklist Json?
+
+  outcome       HospitalOutcome?
+  outcomeDate   DateTime?
+  outcomeNotes  String?
+  reportedToEIDSR Boolean @default(false)
+
+  chwTransferDateTime   DateTime?
+  chwReferralTransport  ChwReferralTransport?
+
+  hcPatientReceivedDateTime            DateTime?
+  hcPatientTransferredToHospitalDateTime DateTime?
+  hcReferralToHospitalTransport        HcReferralTransport?
+  hcPreTreatment                       String[]
+
+  hospitalReceivedDateTime   DateTime?
+  hospitalDischargeDateTime  DateTime?
+  severeMalariaTestResult    SevereMalariaTestResult?
+  hospitalManagementMedication String?
+  finalOutcomeHospital       FinalOutcomeHospital?
+  phaseRetourEligible        Boolean @default(false)
+
+  /// True once district hospital escalates this case to provincial/referral hospital.
+  transferredToReferralHospital Boolean @default(false)
+  /// First time DH initiated transfer to referral hospital (triggers notifications).
+  dhTransferredToReferralHospitalDateTime DateTime?
+  /// How the patient was sent from district hospital toward referral / provincial care.
+  dhReferralToReferralHospitalTransport HcReferralTransport?
+  /// When referral hospital logged receipt (optional).
+  referralHospitalReceivedDateTime DateTime?
+
+  /// Referral / provincial: clinician acknowledged review of HC + district continuity.
+  referralContinuityAcknowledgedAt DateTime?
+  /// New or worsening symptoms / exam findings documented at referral hospital.
+  referralSymptomsUpdate           String?
+  /// improving | stable | worsening
+  referralClinicalTrend            String?
+  /// e.g. ICU, Dialysis, HDU — specialized unit within referral centre.
+  referralSpecializedCareUnit      String?
+  referralSpecializedCareAt      DateTime?
+  /// IV / ICU / dialysis / observation notes at referral hospital.
+  referralInpatientNotes           String?
+
+  /// District hospital: whether patient received HC pre-transfer treatment (handoff).
+  dhHcPreTransferReceived   Boolean?
+  /// Planned observation window in days (1–7) for IV monitoring before oral treatment.
+  dhObservationPlannedDays  Int?
+  dhObservationStartedAt    DateTime?
+  dhOralTreatmentReadyAt    DateTime?
+
+  reportedByUserId String?
+  reportedBy       User?   @relation("CaseReporter", fields: [reportedByUserId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  timeline    CaseTimelineEntry[]
+  notifications Notification[]
+
+  @@index([district, status])
+  @@index([status])
+  @@index([createdAt])
+  @@index([reportedByUserId])
+  @@map("malaria_cases")
+}
+
+model Notification {
+  id              String             @id @default(cuid())
+  type            NotificationType
+  title           String
+  message         String
+  /// Human-readable case id (e.g. SM-2026-0001), matches frontend `caseId`
+  caseRef         String?
+  read            Boolean            @default(false)
+  targetRole      UserRole
+  phase           NotificationPhase?
+  contentLevel    ContentLevel?
+  recipientRoles  String?
+
+  /// Optional: bind to a user inbox when you move beyond role-wide feeds
+  userId String?
+  user   User?   @relation("NotificationUser", fields: [userId], references: [id])
+
+  malariaCaseId String?
+  malariaCase   Case?   @relation(fields: [malariaCaseId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([targetRole, read])
+  @@index([createdAt])
+  @@index([malariaCaseId])
+  @@map("notifications")
+}
