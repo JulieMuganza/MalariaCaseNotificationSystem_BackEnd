@@ -24,6 +24,15 @@ import {
   surveillancePartnerCanAccessCase,
 } from '../utils/surveillancePartner.js';
 
+/** Case-insensitive district match (HC/LC/DH scope vs `MalariaCase.district`). */
+function eqDistrict(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+function prismaDistrictScope(district: string) {
+  return { equals: district.trim(), mode: 'insensitive' as const };
+}
+
 /** Cases in this status are under district hospital care even if HC forgot to set transfer datetime. */
 const DISTRICT_HOSPITAL_PIPELINE: CaseStatus[] = [
   'Escalated',
@@ -53,7 +62,7 @@ function districtHospitalCanAccessCase(
     status: CaseStatus;
   }
 ): boolean {
-  if (c.district !== district || c.transferredToReferralHospital) return false;
+  if (!eqDistrict(c.district, district) || c.transferredToReferralHospital) return false;
   // Do not show community / HC-only closures (never referred to district care).
   if (
     c.status === 'Pending' ||
@@ -81,7 +90,7 @@ function firstLineFacilityCanAccessCase(
   },
   expected: ChwPrimaryReferral
 ): boolean {
-  if (c.district !== district) return false;
+  if (!eqDistrict(c.district, district)) return false;
   if (c.chwPrimaryReferral !== expected) return false;
   if (c.symptomCount > 0) return true;
   if (c.hcPatientReceivedDateTime != null) return true;
@@ -132,7 +141,7 @@ function listWhereForRole(
   if (role === 'CHW') return { reportedByUserId: userId };
   if (role === 'HEALTH_CENTER') {
     return {
-      district,
+      district: prismaDistrictScope(district),
       chwPrimaryReferral: 'HEALTH_CENTER',
       OR: [
         { symptomCount: { gt: 0 } },
@@ -144,7 +153,7 @@ function listWhereForRole(
   }
   if (role === 'LOCAL_CLINIC') {
     return {
-      district,
+      district: prismaDistrictScope(district),
       chwPrimaryReferral: 'LOCAL_CLINIC',
       OR: [
         { symptomCount: { gt: 0 } },
@@ -156,7 +165,7 @@ function listWhereForRole(
   }
   if (role === 'HOSPITAL') {
     return {
-      district,
+      district: prismaDistrictScope(district),
       transferredToReferralHospital: false,
       NOT: {
         status: { in: ['Pending', 'Referred', 'Resolved', 'HC_Received'] },
@@ -170,7 +179,7 @@ function listWhereForRole(
   }
   if (role === 'REFERRAL_HOSPITAL') {
     return {
-      district,
+      district: prismaDistrictScope(district),
       transferredToReferralHospital: true,
     };
   }
@@ -184,7 +193,7 @@ export async function listCases(
   query: { status?: string; district?: string; search?: string }
 ) {
   const base = listWhereForRole(role, userId, district);
-  const where: Record<string, unknown> = { ...base };
+  let where: Record<string, unknown> = { ...base };
   if (
     query.district &&
     (role === 'ADMIN' ||
@@ -192,18 +201,21 @@ export async function listCases(
       role === 'PFTH' ||
       role === 'SFR')
   ) {
-    where.district = query.district;
+    where.district = prismaDistrictScope(query.district);
   }
   if (query.status) {
     where.status = prismaCaseStatusFromApiString(query.status);
   }
   if (query.search) {
     const s = query.search.trim();
-    where.OR = [
-      { patientName: { contains: s, mode: 'insensitive' } },
-      { caseRef: { contains: s, mode: 'insensitive' } },
-      { patientCode: { contains: s, mode: 'insensitive' } },
-    ];
+    const searchClause = {
+      OR: [
+        { patientName: { contains: s, mode: 'insensitive' } },
+        { caseRef: { contains: s, mode: 'insensitive' } },
+        { patientCode: { contains: s, mode: 'insensitive' } },
+      ],
+    };
+    where = { AND: [where, searchClause] };
   }
   const rows = await prisma.case.findMany({
     where,
@@ -246,7 +258,7 @@ function canAccessCase(
     return districtHospitalCanAccessCase(district, c);
   }
   if (role === 'REFERRAL_HOSPITAL') {
-    return c.district === district && c.transferredToReferralHospital;
+    return eqDistrict(c.district, district) && c.transferredToReferralHospital;
   }
   return false;
 }
@@ -347,14 +359,14 @@ export async function patchCase(
   const can =
     role === 'ADMIN' ||
     (role === 'HEALTH_CENTER' &&
-      c.district === district &&
+      eqDistrict(c.district, district) &&
       c.chwPrimaryReferral === 'HEALTH_CENTER') ||
     (role === 'LOCAL_CLINIC' &&
-      c.district === district &&
+      eqDistrict(c.district, district) &&
       c.chwPrimaryReferral === 'LOCAL_CLINIC') ||
     (role === 'HOSPITAL' && districtHospitalCanAccessCase(district, c)) ||
     (role === 'REFERRAL_HOSPITAL' &&
-      c.district === district &&
+      eqDistrict(c.district, district) &&
       c.transferredToReferralHospital) ||
     (role === 'CHW' && c.reportedByUserId === userId);
   if (!can) throw new HttpError(403, 'Forbidden');

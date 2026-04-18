@@ -144,9 +144,11 @@ export function buildCreateCaseData(
     province:
       input.province?.trim() ||
       provinceFromDistrict(
-        isFirstLineReporter ? opts.reporterDistrict : input.district
+        isFirstLineReporter
+          ? opts.reporterDistrict
+          : (input.district ?? '').trim()
       ),
-    district: isFirstLineReporter ? opts.reporterDistrict : input.district,
+    district: (isFirstLineReporter ? opts.reporterDistrict : input.district).trim(),
     sector: input.sector,
     cell: input.cell,
     village: input.village,
