@@ -26,15 +26,15 @@ export function surveillanceTargetForProvince(
   return 'RICH';
 }
 
-/** Prisma `where` fragment: cases visible to RICH (multi-province + legacy null province). */
+/** Prisma `where` fragment: cases visible to RICH (multi-province). */
 export function richCaseProvinceWhere(): object {
   return {
     OR: [
       ...RICH_PROVINCE_FILTERS.map((province) => ({
         province: { equals: province, mode: 'insensitive' as const },
       })),
-      { province: null },
-      { province: '' },
+      /** `province` is required on `Case`; only match empty legacy rows this way (not `province: null`). */
+      { province: { equals: '', mode: 'insensitive' as const } },
     ],
   };
 }

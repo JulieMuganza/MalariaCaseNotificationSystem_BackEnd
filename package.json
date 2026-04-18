@@ -19,6 +19,7 @@
     "db:create-rich-demo": "tsx scripts/create-rich-demo-user.ts",
     "db:create-all-demo-users": "tsx scripts/create-all-demo-users.ts",
     "db:studio": "prisma studio",
+    "db:audit-district": "tsx scripts/audit-district-routing.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

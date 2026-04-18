@@ -1,4 +1,9 @@
-import type { CaseStatus, ChwPrimaryReferral, UserRole } from '@prisma/client';
+import type {
+  CaseStatus,
+  ChwPrimaryReferral,
+  Prisma,
+  UserRole,
+} from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import { HttpError } from '../utils/HttpError.js';
 import {
@@ -62,7 +67,14 @@ function districtHospitalCanAccessCase(
     status: CaseStatus;
   }
 ): boolean {
-  if (!eqDistrict(c.district, district) || c.transferredToReferralHospital) return false;
+  if (!eqDistrict(c.district, district)) return false;
+  /** Keep access after referral transfer so DH can open history (read-only at UI). */
+  if (c.transferredToReferralHospital) {
+    return (
+      c.hcPatientTransferredToHospitalDateTime != null ||
+      c.hospitalReceivedDateTime != null
+    );
+  }
   // Do not show community / HC-only closures (never referred to district care).
   if (
     c.status === 'Pending' ||
@@ -98,11 +110,27 @@ function firstLineFacilityCanAccessCase(
   return HEALTH_CENTER_VISIBLE_STATUSES.includes(c.status);
 }
 
+/** HC inbox: primary HC referrals + same-district LC-tagged cases still Pending/Referred (shared catchment / mis-routing). */
 function healthCenterCanAccessCase(
   district: string,
   c: Parameters<typeof firstLineFacilityCanAccessCase>[1]
 ): boolean {
-  return firstLineFacilityCanAccessCase(district, c, 'HEALTH_CENTER');
+  if (!eqDistrict(c.district, district)) return false;
+  if (c.chwPrimaryReferral === 'HEALTH_CENTER') {
+    return firstLineFacilityCanAccessCase(district, c, 'HEALTH_CENTER');
+  }
+  if (
+    c.chwPrimaryReferral === 'LOCAL_CLINIC' &&
+    (c.status === 'Pending' || c.status === 'Referred')
+  ) {
+    return (
+      c.symptomCount > 0 ||
+      c.hcPatientReceivedDateTime != null ||
+      c.hcPatientTransferredToHospitalDateTime != null ||
+      HEALTH_CENTER_VISIBLE_STATUSES.includes(c.status)
+    );
+  }
+  return false;
 }
 
 function localClinicCanAccessCase(
@@ -140,14 +168,31 @@ function listWhereForRole(
   }
   if (role === 'CHW') return { reportedByUserId: userId };
   if (role === 'HEALTH_CENTER') {
-    return {
-      district: prismaDistrictScope(district),
-      chwPrimaryReferral: 'HEALTH_CENTER',
+    const firstLineVisibility = {
       OR: [
         { symptomCount: { gt: 0 } },
         { hcPatientReceivedDateTime: { not: null } },
         { hcPatientTransferredToHospitalDateTime: { not: null } },
         { status: { in: HEALTH_CENTER_VISIBLE_STATUSES } },
+      ],
+    };
+    return {
+      OR: [
+        {
+          AND: [
+            { district: prismaDistrictScope(district) },
+            { chwPrimaryReferral: 'HEALTH_CENTER' },
+            firstLineVisibility,
+          ],
+        },
+        {
+          AND: [
+            { district: prismaDistrictScope(district) },
+            { chwPrimaryReferral: 'LOCAL_CLINIC' },
+            { status: { in: ['Pending', 'Referred'] } },
+            firstLineVisibility,
+          ],
+        },
       ],
     };
   }
@@ -166,14 +211,25 @@ function listWhereForRole(
   if (role === 'HOSPITAL') {
     return {
       district: prismaDistrictScope(district),
-      transferredToReferralHospital: false,
-      NOT: {
-        status: { in: ['Pending', 'Referred', 'Resolved', 'HC_Received'] },
-      },
       OR: [
-        { hcPatientTransferredToHospitalDateTime: { not: null } },
-        { hospitalReceivedDateTime: { not: null } },
-        { status: { in: DISTRICT_HOSPITAL_PIPELINE } },
+        {
+          transferredToReferralHospital: false,
+          NOT: {
+            status: { in: ['Pending', 'Referred', 'Resolved', 'HC_Received'] },
+          },
+          OR: [
+            { hcPatientTransferredToHospitalDateTime: { not: null } },
+            { hospitalReceivedDateTime: { not: null } },
+            { status: { in: DISTRICT_HOSPITAL_PIPELINE } },
+          ],
+        },
+        {
+          transferredToReferralHospital: true,
+          OR: [
+            { hcPatientTransferredToHospitalDateTime: { not: null } },
+            { hospitalReceivedDateTime: { not: null } },
+          ],
+        },
       ],
     };
   }
@@ -306,7 +362,7 @@ export async function createCase(
   });
   const firstLineReporter =
     reporter.role === 'HEALTH_CENTER' || reporter.role === 'LOCAL_CLINIC';
-  const created = await prisma.case.create({
+  const created = (await prisma.case.create({
     data: {
       ...data,
       timeline: {
@@ -334,7 +390,9 @@ export async function createCase(
       },
     },
     include: { timeline: { orderBy: { createdAt: 'asc' } } },
-  });
+  })) as Prisma.CaseGetPayload<{
+    include: { timeline: { orderBy: { createdAt: 'asc' } } };
+  }>;
   if (created.symptoms.length > 0 && reporter.role === 'CHW') {
     await createNotificationsForNewCase(created);
   } else if (created.symptoms.length > 0 && firstLineReporter) {
@@ -358,9 +416,7 @@ export async function patchCase(
   if (!c) throw new HttpError(404, 'Case not found');
   const can =
     role === 'ADMIN' ||
-    (role === 'HEALTH_CENTER' &&
-      eqDistrict(c.district, district) &&
-      c.chwPrimaryReferral === 'HEALTH_CENTER') ||
+    (role === 'HEALTH_CENTER' && healthCenterCanAccessCase(district, c)) ||
     (role === 'LOCAL_CLINIC' &&
       eqDistrict(c.district, district) &&
       c.chwPrimaryReferral === 'LOCAL_CLINIC') ||
@@ -370,6 +426,13 @@ export async function patchCase(
       c.transferredToReferralHospital) ||
     (role === 'CHW' && c.reportedByUserId === userId);
   if (!can) throw new HttpError(403, 'Forbidden');
+
+  if (role === 'HOSPITAL' && c.transferredToReferralHospital) {
+    throw new HttpError(
+      403,
+      'This case was transferred to referral hospital. District record is read-only.'
+    );
+  }
 
   const safeInput = sanitizePatchForRole(role, input);
   const patch = buildPatchCaseData(safeInput);

@@ -370,7 +370,7 @@ async function main() {
         chwId: chw.staffCode ?? 'CHW-101',
         reportedByUserId: chw.id,
         chwTransferDateTime: new Date('2026-03-28T08:00:00.000Z'),
-        chwReferralTransport: 'Self',
+        chwReferralTransport: 'Walk',
         vulnerabilities: [],
         hcPreTreatment: [],
         timeline: {
@@ -459,7 +459,7 @@ async function main() {
         chwId: chw.staffCode ?? 'CHW-101',
         reportedByUserId: chw.id,
         chwTransferDateTime: new Date('2026-03-29T09:00:00.000Z'),
-        chwReferralTransport: 'Self',
+        chwReferralTransport: 'Walk',
         vulnerabilities: [],
         hcPreTreatment: [],
         timeline: {
@@ -536,7 +536,7 @@ async function main() {
         chwId: chw.staffCode ?? 'CHW-101',
         reportedByUserId: chw.id,
         chwTransferDateTime: new Date('2026-03-30T10:00:00.000Z'),
-        chwReferralTransport: 'Self',
+        chwReferralTransport: 'Walk',
         vulnerabilities: [],
         hcPreTreatment: [],
         timeline: {

@@ -94,6 +94,7 @@ const DISTRICT_HOSPITAL_KEYS: PatchKey[] = [
   'hospitalManagementMedication',
   'finalOutcomeHospital',
   'phaseRetourEligible',
+  'hcPreTreatment',
   'dhHcPreTransferReceived',
   'dhObservationPlannedDays',
   'dhObservationStartedAt',

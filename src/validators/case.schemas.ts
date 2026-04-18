@@ -61,7 +61,9 @@ const createCaseSchemaBase = z.object({
   pregnant: z.boolean().optional(),
   breastfeeding: z.boolean().optional(),
   chwTransferDateTime: z.string().min(4).optional(),
-  chwReferralTransport: z.enum(['Self', 'With CHW', 'Ambulance']).optional(),
+  chwReferralTransport: z
+    .enum(['Walk', 'Motorcycle', 'Car', 'With CHW', 'Ambulance', 'Self'])
+    .optional(),
   /** CHW: send severe referral to health center or local clinic first. */
   chwPrimaryReferral: z.enum(['HEALTH_CENTER', 'LOCAL_CLINIC']).optional(),
   healthCenter: z.string().optional(),

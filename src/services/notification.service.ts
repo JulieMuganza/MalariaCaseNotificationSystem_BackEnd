@@ -29,12 +29,16 @@ function patientCodeDisplay(c: Case): string {
 function fmtChwTransport(t: ChwReferralTransport | null | undefined): string {
   if (!t) return '—';
   if (t === 'With_CHW') return 'With CHW';
+  if (t === 'Self') return 'Walk';
   return t;
 }
 
 function fmtHcTransport(t: HcReferralTransport | null | undefined): string {
   if (!t) return '—';
   if (t === 'With_relative') return 'With relative';
+  if (t === 'Walk' || t === 'Bicycle') return 'Self';
+  if (t === 'Motor') return 'With relative';
+  if (t === 'Car_Bus') return 'Ambulance';
   return t;
 }
 
@@ -614,13 +618,14 @@ function districtEquals(district: string) {
   return { equals: t, mode: 'insensitive' as const };
 }
 
-export async function listNotificationsForUser(
+/** Shared inbox filter (excludes chat pseudo-notifications). Used by list + mark-all-read. */
+export function buildNotificationInboxWhere(
   role: UserRole,
   userId: string,
   district: string
-) {
+): Prisma.NotificationWhereInput {
   const dEq = districtEquals(district);
-  const where =
+  const where: Prisma.NotificationWhereInput =
     role === 'ADMIN'
       ? {}
       : role === 'RICH'
@@ -639,69 +644,77 @@ export async function listNotificationsForUser(
                 malariaCase: { is: sfrCaseProvinceWhere() },
               }
             : role === 'CHW'
-        ? {
-            targetRole: 'CHW' as const,
-            OR: [{ userId: null }, { userId }],
-          }
-        : role === 'HEALTH_CENTER'
-          ? dEq
-            ? {
-                targetRole: 'HEALTH_CENTER' as const,
-                malariaCase: {
-                  is: {
-                    district: dEq,
-                    chwPrimaryReferral: 'HEALTH_CENTER',
-                    OR: [
-                      { symptomCount: { gt: 0 } },
-                      { hcPatientReceivedDateTime: { not: null } },
-                      { hcPatientTransferredToHospitalDateTime: { not: null } },
-                    ],
-                  },
-                },
-              }
-            : { targetRole: 'HEALTH_CENTER' as const, id: { in: [] } }
-          : role === 'LOCAL_CLINIC'
-            ? dEq
               ? {
-                  targetRole: 'LOCAL_CLINIC' as const,
-                  malariaCase: {
-                    is: {
-                      district: dEq,
-                      chwPrimaryReferral: 'LOCAL_CLINIC',
-                      OR: [
-                        { symptomCount: { gt: 0 } },
-                        { hcPatientReceivedDateTime: { not: null } },
-                        { hcPatientTransferredToHospitalDateTime: { not: null } },
-                      ],
-                    },
-                  },
+                  targetRole: 'CHW' as const,
+                  OR: [{ userId: null }, { userId }],
                 }
-              : { targetRole: 'LOCAL_CLINIC' as const, id: { in: [] } }
-          : role === 'HOSPITAL'
-            ? dEq
-              ? {
-                  targetRole: 'HOSPITAL' as const,
-                  malariaCase: {
-                    is: { district: dEq },
-                  },
-                }
-              : { targetRole: 'HOSPITAL' as const, id: { in: [] } }
-            : role === 'REFERRAL_HOSPITAL'
-              ? dEq
-                ? {
-                    targetRole: 'REFERRAL_HOSPITAL' as const,
-                    malariaCase: {
-                      is: { district: dEq },
-                    },
-                  }
-                : { targetRole: 'REFERRAL_HOSPITAL' as const, id: { in: [] } }
-              : { targetRole: role };
-  const whereWithoutChat = {
+              : role === 'HEALTH_CENTER'
+                ? dEq
+                  ? {
+                      targetRole: 'HEALTH_CENTER' as const,
+                      malariaCase: {
+                        is: {
+                          district: dEq,
+                          chwPrimaryReferral: 'HEALTH_CENTER',
+                          OR: [
+                            { symptomCount: { gt: 0 } },
+                            { hcPatientReceivedDateTime: { not: null } },
+                            { hcPatientTransferredToHospitalDateTime: { not: null } },
+                          ],
+                        },
+                      },
+                    }
+                  : { targetRole: 'HEALTH_CENTER' as const, id: { in: [] } }
+                : role === 'LOCAL_CLINIC'
+                  ? dEq
+                    ? {
+                        targetRole: 'LOCAL_CLINIC' as const,
+                        malariaCase: {
+                          is: {
+                            district: dEq,
+                            chwPrimaryReferral: 'LOCAL_CLINIC',
+                            OR: [
+                              { symptomCount: { gt: 0 } },
+                              { hcPatientReceivedDateTime: { not: null } },
+                              { hcPatientTransferredToHospitalDateTime: { not: null } },
+                            ],
+                          },
+                        },
+                      }
+                    : { targetRole: 'LOCAL_CLINIC' as const, id: { in: [] } }
+                  : role === 'HOSPITAL'
+                    ? dEq
+                      ? {
+                          targetRole: 'HOSPITAL' as const,
+                          malariaCase: {
+                            is: { district: dEq },
+                          },
+                        }
+                      : { targetRole: 'HOSPITAL' as const, id: { in: [] } }
+                    : role === 'REFERRAL_HOSPITAL'
+                      ? dEq
+                        ? {
+                            targetRole: 'REFERRAL_HOSPITAL' as const,
+                            malariaCase: {
+                              is: { district: dEq },
+                            },
+                          }
+                        : { targetRole: 'REFERRAL_HOSPITAL' as const, id: { in: [] } }
+                      : { targetRole: role };
+  return {
     ...where,
     title: {
       notIn: [...CHAT_TITLES],
     },
   };
+}
+
+export async function listNotificationsForUser(
+  role: UserRole,
+  userId: string,
+  district: string
+) {
+  const whereWithoutChat = buildNotificationInboxWhere(role, userId, district);
   const take =
     role === 'ADMIN' ||
     role === 'RICH' ||
@@ -773,4 +786,21 @@ export async function markNotificationRead(
     data: { read: true },
   });
   return mapNotificationToApi(updated);
+}
+
+/** Mark every unread notification in this user's inbox as read (same scope as list). */
+export async function markAllNotificationsRead(
+  role: UserRole,
+  userId: string,
+  district: string
+): Promise<{ count: number }> {
+  const where = buildNotificationInboxWhere(role, userId, district);
+  const result = await prisma.notification.updateMany({
+    where: {
+      ...where,
+      read: false,
+    },
+    data: { read: true },
+  });
+  return { count: result.count };
 }

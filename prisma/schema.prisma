@@ -76,6 +76,9 @@ enum FinalOutcomeHospital {
 
 enum ChwReferralTransport {
   Self
+  Walk
+  Motorcycle
+  Car
   With_CHW
   Ambulance
 }
@@ -84,6 +87,10 @@ enum HcReferralTransport {
   Self
   With_relative
   Ambulance
+  Walk
+  Bicycle
+  Motor
+  Car_Bus
 }
 
 enum SevereMalariaTestResult {

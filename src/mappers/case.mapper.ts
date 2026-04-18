@@ -54,17 +54,28 @@ function mapFinalOutcome(
 
 function mapChwTransport(
   t: ChwReferralTransport | null | undefined
-): 'Self' | 'With CHW' | 'Ambulance' | undefined {
+):
+  | 'Walk'
+  | 'Motorcycle'
+  | 'Car'
+  | 'With CHW'
+  | 'Ambulance'
+  | undefined {
   if (!t) return undefined;
   if (t === 'With_CHW') return 'With CHW';
-  return t as 'Self' | 'Ambulance';
+  if (t === 'Self') return 'Walk';
+  return t as 'Walk' | 'Motorcycle' | 'Car' | 'Ambulance';
 }
 
+/** Prisma → API (three options). Maps any extra DB enum labels from older migrations for display. */
 function mapHcTransport(
   t: HcReferralTransport | null | undefined
 ): 'Self' | 'With relative' | 'Ambulance' | undefined {
   if (!t) return undefined;
   if (t === 'With_relative') return 'With relative';
+  if (t === 'Walk' || t === 'Bicycle') return 'Self';
+  if (t === 'Motor') return 'With relative';
+  if (t === 'Car_Bus') return 'Ambulance';
   return t as 'Self' | 'Ambulance';
 }
 

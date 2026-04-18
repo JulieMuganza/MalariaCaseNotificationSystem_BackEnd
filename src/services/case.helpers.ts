@@ -56,10 +56,21 @@ export function apiHospitalOutcomeToPrisma(
 }
 
 export function apiChwTransportToPrisma(
-  s: 'Self' | 'With CHW' | 'Ambulance' | undefined
+  s:
+    | 'Walk'
+    | 'Motorcycle'
+    | 'Car'
+    | 'Self'
+    | 'With CHW'
+    | 'Ambulance'
+    | undefined
 ): ChwReferralTransport | undefined {
   if (!s) return undefined;
   if (s === 'With CHW') return 'With_CHW';
+  if (s === 'Walk') return 'Walk' as ChwReferralTransport;
+  if (s === 'Motorcycle') return 'Motorcycle' as ChwReferralTransport;
+  if (s === 'Car') return 'Car' as ChwReferralTransport;
+  if (s === 'Self') return 'Walk' as ChwReferralTransport;
   return s as ChwReferralTransport;
 }
 
@@ -201,7 +212,9 @@ export function buildCreateCaseData(
     reportedToEIDSR: false,
     phaseRetourEligible: false,
     chwTransferDateTime: chwTransfer,
-    chwReferralTransport: apiChwTransportToPrisma(input.chwReferralTransport) ?? 'Self',
+    chwReferralTransport:
+      apiChwTransportToPrisma(input.chwReferralTransport) ??
+      ('Walk' as ChwReferralTransport),
     reportedByUserId: opts.reporterUserId,
   };
 }
