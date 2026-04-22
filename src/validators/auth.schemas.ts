@@ -19,6 +19,7 @@ export const registerSchema = z
     email: z.string().email().max(255),
     password: z.string().min(8).max(128),
     name: z.string().min(1).max(200),
+    phone: z.string().min(7).max(30),
     district: z.string().max(100).optional().default(''),
     staffCode: z.string().max(50).optional(),
   })
@@ -60,9 +61,10 @@ export const patchMeSchema = z
   .object({
     name: z.string().min(1).max(200).optional(),
     district: z.string().min(1).max(100).optional(),
+    phone: z.string().min(7).max(30).optional(),
   })
   .strict()
-  .refine((b) => b.name !== undefined || b.district !== undefined, {
-    message: 'Provide at least one of: name, district',
+  .refine((b) => b.name !== undefined || b.district !== undefined || b.phone !== undefined, {
+    message: 'Provide at least one of: name, district, phone',
   });
 

@@ -61,6 +61,113 @@ function referringHealthCenterName(c: Case): string {
   return c.chwName?.trim() || '—';
 }
 
+function extractLineValue(message: string, key: string): string | null {
+  const line = message
+    .split('\n')
+    .find((l) => l.toLowerCase().startsWith(`${key.toLowerCase()}:`));
+  if (!line) return null;
+  const value = line.slice(line.indexOf(':') + 1).trim();
+  return value || null;
+}
+
+function patchHealthCenterName(
+  message: string,
+  caseHealthCenterName?: string | null,
+  viewerFacilityName?: string | null
+): string {
+  const facility = caseHealthCenterName?.trim() || viewerFacilityName?.trim();
+  if (!facility) return message;
+
+  const lines = message.split('\n');
+  const hcLineIdx = lines.findIndex((l) =>
+    l.toLowerCase().startsWith('health center name:')
+  );
+  if (hcLineIdx < 0) return message;
+
+  const currentHealthCenter = extractLineValue(message, 'Health center name') ?? '';
+  const chwName = extractLineValue(message, 'CHW') ?? '';
+  const shouldReplace =
+    !currentHealthCenter ||
+    currentHealthCenter === '—' ||
+    (chwName &&
+      currentHealthCenter.localeCompare(chwName, undefined, {
+        sensitivity: 'accent',
+      }) === 0);
+
+  if (!shouldReplace) return message;
+  lines[hcLineIdx] = `Health center name: ${facility}`;
+  return lines.join('\n');
+}
+
+function patchDistrictHospitalName(
+  message: string,
+  caseDistrictHospitalName?: string | null,
+  caseDistrict?: string | null,
+  viewerFacilityName?: string | null
+): string {
+  const districtFallback = caseDistrict?.trim()
+    ? `${caseDistrict.trim()} District Hospital`
+    : null;
+  const facility =
+    caseDistrictHospitalName?.trim() ||
+    viewerFacilityName?.trim() ||
+    districtFallback;
+  if (!facility) return message;
+
+  const lines = message.split('\n');
+  const dhLineIdx = lines.findIndex((l) =>
+    l.toLowerCase().startsWith('district hosp name:')
+  );
+  if (dhLineIdx < 0) return message;
+
+  const currentDistrictHospital = extractLineValue(message, 'District hosp name') ?? '';
+  const districtLabel = caseDistrict?.trim()
+    ? `${caseDistrict.trim()} District Hospital`
+    : null;
+  const shouldReplace =
+    !currentDistrictHospital ||
+    currentDistrictHospital === '—' ||
+    currentDistrictHospital === 'District Hospital' ||
+    (districtLabel !== null &&
+      currentDistrictHospital.localeCompare(districtLabel, undefined, {
+        sensitivity: 'accent',
+      }) === 0 &&
+      currentDistrictHospital.localeCompare(facility, undefined, {
+        sensitivity: 'accent',
+      }) !== 0);
+  if (!shouldReplace) return message;
+
+  lines[dhLineIdx] = `District hosp name: ${facility}`;
+  return lines.join('\n');
+}
+
+function districtHospitalNameFromCaseShape(c: {
+  hospital?: string | null;
+  timeline?: { actorName: string; actorRole: string }[];
+}): string | null {
+  const explicit = c.hospital?.trim();
+  if (explicit) return explicit;
+
+  const byDistrictRole = c.timeline
+    ?.slice()
+    .reverse()
+    .find((t) => /district hospital/i.test(t.actorRole) && t.actorName?.trim());
+  if (byDistrictRole?.actorName?.trim()) return byDistrictRole.actorName.trim();
+
+  const byHospitalRole = c.timeline
+    ?.slice()
+    .reverse()
+    .find(
+      (t) =>
+        /hospital/i.test(t.actorRole) &&
+        !/referral/i.test(t.actorRole) &&
+        t.actorName?.trim()
+    );
+  if (byHospitalRole?.actorName?.trim()) return byHospitalRole.actorName.trim();
+
+  return null;
+}
+
 /**
  * Unified notification body (same shape as Dist Hsp→Referral): route, facility, patient,
  * demographics, treatment, symptoms, transport; optional extra lines for surveillance/detail.
@@ -68,6 +175,7 @@ function referringHealthCenterName(c: Case): string {
 export function buildStructuredCaseNotification(opts: {
   route: string;
   facilityLine: string;
+  prePatientLines?: string[];
   patientName: string;
   patientCode: string;
   sex: string;
@@ -80,6 +188,7 @@ export function buildStructuredCaseNotification(opts: {
   return [
     opts.route,
     opts.facilityLine,
+    ...(opts.prePatientLines ?? []),
     `Patient name: ${opts.patientName}`,
     `Patient code: ${opts.patientCode}`,
     `Gender: ${opts.sex}`,
@@ -91,12 +200,13 @@ export function buildStructuredCaseNotification(opts: {
   ].join('\n');
 }
 
-export function buildChwToHcPartialSummary(c: Case): string {
+export function buildChwToHcPartialSummary(c: Case, chwPhone?: string | null): string {
   const code = patientCodeDisplay(c);
   const rdt = c.chwRapidTestResult ?? 'Positive';
   return buildStructuredCaseNotification({
     route: 'CHW->Health Center',
     facilityLine: `Health center name: ${referringHealthCenterName(c)}`,
+    prePatientLines: [`CHW: ${c.chwName}`, `Phone: ${chwPhone?.trim() || '—'}`],
     patientName: c.patientName,
     patientCode: code,
     sex: c.sex,
@@ -482,14 +592,17 @@ export async function emitCaseTransitionNotifications(
   await Promise.all(tasks);
 }
 
-export async function createNotificationsForNewCase(caseRow: Case) {
+export async function createNotificationsForNewCase(
+  caseRow: Case,
+  reporter: { name: string; phone?: string | null }
+) {
   const firstLine = firstLineTargetRole(caseRow);
   await prisma.notification.createMany({
     data: [
       {
         type: 'alert',
         title: 'New case from CHW',
-        message: buildChwToHcPartialSummary(caseRow),
+        message: buildChwToHcPartialSummary(caseRow, reporter.phone),
         caseRef: caseRow.caseRef,
         targetRole: firstLine,
         phase: 'aller',
@@ -714,6 +827,24 @@ export async function listNotificationsForUser(
   userId: string,
   district: string
 ) {
+  const viewerName =
+    role === 'HEALTH_CENTER' || role === 'LOCAL_CLINIC'
+      ? (
+          await prisma.user.findUnique({
+            where: { id: userId },
+            select: { name: true },
+          })
+        )?.name ?? null
+      : null;
+  const viewerDistrictHospitalName =
+    role === 'HOSPITAL'
+      ? (
+          await prisma.user.findUnique({
+            where: { id: userId },
+            select: { name: true },
+          })
+        )?.name ?? null
+      : null;
   const whereWithoutChat = buildNotificationInboxWhere(role, userId, district);
   const take =
     role === 'ADMIN' ||
@@ -726,7 +857,16 @@ export async function listNotificationsForUser(
     where: whereWithoutChat as Prisma.NotificationWhereInput,
     orderBy: { createdAt: 'desc' },
     take,
-    include: { malariaCase: true },
+    include: {
+      malariaCase: {
+        include: {
+          timeline: {
+            orderBy: { createdAt: 'asc' },
+            select: { actorName: true, actorRole: true },
+          },
+        },
+      },
+    },
   });
   const normalized = rows.map((n) => {
     if (
@@ -736,10 +876,17 @@ export async function listNotificationsForUser(
       n.malariaCase &&
       (n.title.includes('CHW') || n.recipientRoles?.includes('CHEO'))
     ) {
+      const parsedPhone = extractLineValue(n.message, 'Phone');
+      const chwPhone = parsedPhone && parsedPhone !== '—' ? parsedPhone : undefined;
+      const rebuilt = buildChwToHcPartialSummary(n.malariaCase, chwPhone);
       return {
         ...n,
         title: 'New case from CHW',
-        message: buildChwToHcPartialSummary(n.malariaCase),
+        message: patchHealthCenterName(
+          rebuilt,
+          n.malariaCase.healthCenter,
+          viewerName
+        ),
       };
     }
     if (
@@ -747,15 +894,41 @@ export async function listNotificationsForUser(
       n.targetRole === 'LOCAL_CLINIC' &&
       n.phase === 'aller' &&
       n.malariaCase &&
+      !n.message.includes('Phone:') &&
       (n.title.includes('CHW') || n.recipientRoles?.includes('Local clinic'))
     ) {
       return {
         ...n,
         title: 'New case from CHW',
-        message: buildChwToHcPartialSummary(n.malariaCase),
+        message: patchHealthCenterName(
+          buildChwToHcPartialSummary(n.malariaCase),
+          n.malariaCase.healthCenter,
+          viewerName
+        ),
       };
     }
-    return n;
+    if (
+      !n.malariaCase ||
+      (!n.message.includes('Health center name:') &&
+        !n.message.includes('District hosp name:'))
+    ) {
+      return n;
+    }
+    const patchedHealthCenterMessage = patchHealthCenterName(
+      n.message,
+      n.malariaCase.healthCenter,
+      viewerName
+    );
+    const patchedDistrictHospitalMessage = patchDistrictHospitalName(
+      patchedHealthCenterMessage,
+      districtHospitalNameFromCaseShape(n.malariaCase),
+      n.malariaCase.district,
+      viewerDistrictHospitalName
+    );
+    return {
+      ...n,
+      message: patchedDistrictHospitalMessage,
+    };
   });
   return normalized.map(mapNotificationToApi);
 }

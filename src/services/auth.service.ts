@@ -60,6 +60,7 @@ export async function registerUser(
       email,
       passwordHash,
       name: input.name,
+      phone: input.phone.trim(),
       role: appRoleToPrisma('CHW'),
       district,
       staffCode: input.staffCode,
@@ -240,7 +241,7 @@ export async function getUserById(id: string) {
 export async function updateMyProfile(
   userId: string,
   role: UserRole,
-  input: { name?: string; district?: string }
+  input: { name?: string; district?: string; phone?: string }
 ) {
   if (input.district !== undefined && role !== 'CHW') {
     throw new HttpError(
@@ -248,9 +249,10 @@ export async function updateMyProfile(
       'Only CHW accounts may update district here. Ask an admin to change district for other roles.'
     );
   }
-  const data: { name?: string; district?: string } = {};
+  const data: { name?: string; district?: string; phone?: string | null } = {};
   if (input.name !== undefined) data.name = input.name.trim();
   if (input.district !== undefined) data.district = input.district.trim();
+  if (input.phone !== undefined) data.phone = input.phone.trim() || null;
   const updated = await prisma.user.update({
     where: { id: userId },
     data,

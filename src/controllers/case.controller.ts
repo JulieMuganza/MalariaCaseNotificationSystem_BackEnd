@@ -107,6 +107,7 @@ export const caseController = {
         select: {
           id: true,
           name: true,
+          phone: true,
           staffCode: true,
           district: true,
           role: true,

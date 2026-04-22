@@ -120,6 +120,7 @@ model User {
   email         String     @unique
   passwordHash  String?
   name          String
+  phone         String?
   role          UserRole
   district      String
   status        UserStatus @default(ACTIVE)

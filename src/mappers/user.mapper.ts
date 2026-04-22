@@ -14,6 +14,7 @@ export function mapUserToApi(u: User) {
     status,
     lastActive: u.lastActiveAt.toISOString(),
     email: u.email,
+    phone: u.phone,
     emailVerified: u.emailVerified,
     mustChangePassword: u.mustChangePassword,
   };

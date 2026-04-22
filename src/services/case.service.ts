@@ -346,6 +346,7 @@ export async function createCase(
   reporter: {
     id: string;
     name: string;
+    phone: string | null;
     staffCode: string | null;
     role: UserRole;
     district: string;
@@ -394,7 +395,10 @@ export async function createCase(
     include: { timeline: { orderBy: { createdAt: 'asc' } } };
   }>;
   if (created.symptoms.length > 0 && reporter.role === 'CHW') {
-    await createNotificationsForNewCase(created);
+    await createNotificationsForNewCase(created, {
+      name: reporter.name,
+      phone: reporter.phone,
+    });
   } else if (created.symptoms.length > 0 && firstLineReporter) {
     await createNotificationsForHcNewCase(created, reporter.name);
   }
@@ -436,6 +440,17 @@ export async function patchCase(
 
   const safeInput = sanitizePatchForRole(role, input);
   const patch = buildPatchCaseData(safeInput);
+  if (
+    (role === 'HEALTH_CENTER' || role === 'LOCAL_CLINIC') &&
+    actorName.trim().length > 0
+  ) {
+    // Keep case facility identity aligned with first-line profile used in notifications.
+    patch.healthCenter = actorName.trim();
+  }
+  if (role === 'HOSPITAL' && actorName.trim().length > 0) {
+    // Keep district hospital identity aligned with the hospital profile for referral alerts.
+    patch.hospital = actorName.trim();
+  }
   if (Object.keys(patch).length === 0 && !safeInput.timelineEvent) {
     return getCaseByRef(caseRef, role, userId, district);
   }
