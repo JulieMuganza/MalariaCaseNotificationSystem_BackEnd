@@ -14,7 +14,7 @@ type ChatTitle = (typeof CHAT_TITLES)[number];
 type ApiRoleLabel =
   | 'CHW'
   | 'Health Center'
-  | 'Local Clinic'
+  | 'Health Post'
   | 'District Hospital'
   | 'Referral Hospital';
 
@@ -84,7 +84,7 @@ function parseMeta(raw: string | null): ChatMeta | null {
 function senderRoleLabel(role: UserRole): ApiRoleLabel {
   if (role === 'CHW') return 'CHW';
   if (role === 'HEALTH_CENTER') return 'Health Center';
-  if (role === 'LOCAL_CLINIC') return 'Local Clinic';
+  if (role === 'LOCAL_CLINIC') return 'Health Post';
   if (role === 'HOSPITAL') return 'District Hospital';
   return 'Referral Hospital';
 }
@@ -155,7 +155,7 @@ async function conversationDisplayName(
     return chw?.name ?? 'Community Health Worker';
   }
   if (conversationId.startsWith('chw-lc:')) {
-    if (role === 'CHW') return `${district} Local Clinic`;
+    if (role === 'CHW') return `${district} Health Post`;
     const chwId = conversationId.replace('chw-lc:', '');
     const chw = await prisma.user.findUnique({
       where: { id: chwId },
@@ -179,7 +179,7 @@ function conversationRoleLabel(conversationId: string, role: UserRole): ApiRoleL
     return role === 'CHW' ? 'Health Center' : 'CHW';
   }
   if (conversationId.startsWith('chw-lc:')) {
-    return role === 'CHW' ? 'Local Clinic' : 'CHW';
+    return role === 'CHW' ? 'Health Post' : 'CHW';
   }
   if (conversationId.startsWith('hc-hospital:')) {
     return role === 'HOSPITAL' ? 'Health Center' : 'District Hospital';
@@ -215,7 +215,7 @@ async function targetForSend(
     const chwId = conversationId.replace('chw-lc:', '');
     if (role === 'CHW') return { role: 'LOCAL_CLINIC', userId: null };
     if (role === 'LOCAL_CLINIC') return { role: 'CHW', userId: chwId };
-    throw new HttpError(403, 'This conversation is only for CHW and Local Clinic');
+    throw new HttpError(403, 'This conversation is only for CHW and Health Post');
   }
   if (conversationId === `hc-hospital:${d}`) {
     if (role === 'HEALTH_CENTER') return { role: 'HOSPITAL', userId: null };

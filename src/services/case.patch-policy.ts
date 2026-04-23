@@ -70,10 +70,8 @@ const HC_KEYS: PatchKey[] = [
   'transportMode',
 ];
 
-/** Local clinic: same HC workflow except no severe-malaria diagnostic (TDR) capture at this tier. */
-const LOCAL_CLINIC_KEYS: PatchKey[] = HC_KEYS.filter(
-  (k) => k !== 'severeMalariaTestResult'
-);
+/** Health post: same clinical workflow as health center, including severe-malaria diagnostic (TDR). */
+const LOCAL_CLINIC_KEYS: PatchKey[] = [...HC_KEYS];
 
 /** District hospital (Prisma HOSPITAL) — includes escalation to referral hospital. */
 const DISTRICT_HOSPITAL_KEYS: PatchKey[] = [

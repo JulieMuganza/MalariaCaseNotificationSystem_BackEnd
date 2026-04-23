@@ -371,8 +371,8 @@ export async function createCase(
           event:
             reporter.role === 'LOCAL_CLINIC'
               ? data.symptoms.length > 0
-                ? 'Case registered at Local Clinic (walk-in severe case)'
-                : 'Case closed at Local Clinic (non-severe, no transfer)'
+                ? 'Case registered at Health Post (walk-in severe case)'
+                : 'Case closed at Health Post (non-severe, no transfer)'
               : reporter.role === 'HEALTH_CENTER'
                 ? data.symptoms.length > 0
                   ? 'Case registered at Health Center (walk-in severe case)'
@@ -383,7 +383,7 @@ export async function createCase(
           actorName: reporter.name,
           actorRole:
             reporter.role === 'LOCAL_CLINIC'
-              ? 'Local Clinic'
+              ? 'Health Post'
               : reporter.role === 'HEALTH_CENTER'
                 ? 'Health Center'
                 : 'CHW',

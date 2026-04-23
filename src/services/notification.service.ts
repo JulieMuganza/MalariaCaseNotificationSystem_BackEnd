@@ -47,12 +47,28 @@ function locationLine(c: Case): string {
 }
 
 function symptomsLine(c: Case): string {
-  return c.symptoms.length > 0 ? c.symptoms.join(', ') : '—';
+  if (c.symptoms.length > 0) return c.symptoms.join(', ');
+  if (c.chwSymptoms.length > 0) return c.chwSymptoms.join(', ');
+  return '—';
 }
 
 function hcPreTreatmentLine(c: Case): string {
   const t = c.hcPreTreatment?.filter(Boolean) ?? [];
   return t.length > 0 ? t.join(', ') : '—';
+}
+
+/** Dist Hsp -> Referral treatment line should include what first-line gave and what DH added. */
+function districtToReferralTreatmentLine(c: Case): string {
+  const firstLine = (c.hcPreTreatment ?? [])
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .join(', ');
+  const dh = c.hospitalManagementMedication?.trim() ?? '';
+
+  if (firstLine && dh) return `${firstLine} | DH: ${dh}`;
+  if (dh) return dh;
+  if (firstLine) return firstLine;
+  return '—';
 }
 
 function referringHealthCenterName(c: Case): string {
@@ -80,11 +96,16 @@ function patchHealthCenterName(
 
   const lines = message.split('\n');
   const hcLineIdx = lines.findIndex((l) =>
-    l.toLowerCase().startsWith('health center name:')
+    l.toLowerCase().startsWith('health center name:') ||
+    l.toLowerCase().startsWith('health post name:')
   );
   if (hcLineIdx < 0) return message;
 
-  const currentHealthCenter = extractLineValue(message, 'Health center name') ?? '';
+  const isHealthPostLine = lines[hcLineIdx]
+    .toLowerCase()
+    .startsWith('health post name:');
+  const currentHealthCenter =
+    extractLineValue(message, isHealthPostLine ? 'Health post name' : 'Health center name') ?? '';
   const chwName = extractLineValue(message, 'CHW') ?? '';
   const shouldReplace =
     !currentHealthCenter ||
@@ -95,7 +116,9 @@ function patchHealthCenterName(
       }) === 0);
 
   if (!shouldReplace) return message;
-  lines[hcLineIdx] = `Health center name: ${facility}`;
+  lines[hcLineIdx] = `${
+    isHealthPostLine ? 'Health post name' : 'Health center name'
+  }: ${facility}`;
   return lines.join('\n');
 }
 
@@ -138,6 +161,19 @@ function patchDistrictHospitalName(
   if (!shouldReplace) return message;
 
   lines[dhLineIdx] = `District hosp name: ${facility}`;
+  return lines.join('\n');
+}
+
+function patchDistReferralTreatment(
+  message: string,
+  treatment: string
+): string {
+  if (!/dist\s*hsp->referral/i.test(message)) return message;
+  if (!treatment.trim()) return message;
+  const lines = message.split('\n');
+  const idx = lines.findIndex((l) => l.toLowerCase().startsWith('treatment:'));
+  if (idx < 0) return message;
+  lines[idx] = `Treatment: ${treatment}`;
   return lines.join('\n');
 }
 
@@ -203,9 +239,12 @@ export function buildStructuredCaseNotification(opts: {
 export function buildChwToHcPartialSummary(c: Case, chwPhone?: string | null): string {
   const code = patientCodeDisplay(c);
   const rdt = c.chwRapidTestResult ?? 'Positive';
+  const atLocal = c.chwPrimaryReferral === 'LOCAL_CLINIC';
   return buildStructuredCaseNotification({
-    route: 'CHW->Health Center',
-    facilityLine: `Health center name: ${referringHealthCenterName(c)}`,
+    route: atLocal ? 'CHW->Health Post' : 'CHW->Health Center',
+    facilityLine: `${
+      atLocal ? 'Health post name' : 'Health center name'
+    }: ${referringHealthCenterName(c)}`,
     prePatientLines: [`CHW: ${c.chwName}`, `Phone: ${chwPhone?.trim() || '—'}`],
     patientName: c.patientName,
     patientCode: code,
@@ -219,9 +258,12 @@ export function buildChwToHcPartialSummary(c: Case, chwPhone?: string | null): s
 
 export function buildChwToRichFullSummary(c: Case): string {
   const code = patientCodeDisplay(c);
+  const atLocal = c.chwPrimaryReferral === 'LOCAL_CLINIC';
   return buildStructuredCaseNotification({
-    route: 'CHW->Health Center (surveillance)',
-    facilityLine: `Health center name: ${referringHealthCenterName(c)}`,
+    route: atLocal ? 'CHW->Health Post (surveillance)' : 'CHW->Health Center (surveillance)',
+    facilityLine: `${
+      atLocal ? 'Health post name' : 'Health center name'
+    }: ${referringHealthCenterName(c)}`,
     patientName: c.patientName,
     patientCode: code,
     sex: c.sex,
@@ -240,9 +282,12 @@ export function buildChwToRichFullSummary(c: Case): string {
 /** HC → District Hospital — short inbox line (same tone as other alerts). */
 export function buildHcToHospitalPartialSummary(c: Case): string {
   const code = patientCodeDisplay(c);
+  const atLocal = c.chwPrimaryReferral === 'LOCAL_CLINIC';
   return buildStructuredCaseNotification({
-    route: 'HC->District Hospital',
-    facilityLine: `Health center name: ${referringHealthCenterName(c)}`,
+    route: atLocal ? 'Health Post->District Hospital' : 'HC->District Hospital',
+    facilityLine: `${
+      atLocal ? 'Health post name' : 'Health center name'
+    }: ${referringHealthCenterName(c)}`,
     patientName: c.patientName,
     patientCode: code,
     sex: c.sex,
@@ -257,9 +302,14 @@ export function buildHcToHospitalPartialSummary(c: Case): string {
 /** HC → RICH when referring to hospital (compact; full detail in case record). */
 export function buildHcReferralToRichFullSummary(c: Case): string {
   const code = patientCodeDisplay(c);
+  const atLocal = c.chwPrimaryReferral === 'LOCAL_CLINIC';
   return buildStructuredCaseNotification({
-    route: 'HC->District Hospital (surveillance)',
-    facilityLine: `Health center name: ${referringHealthCenterName(c)}`,
+    route: atLocal
+      ? 'Health Post->District Hospital (surveillance)'
+      : 'HC->District Hospital (surveillance)',
+    facilityLine: `${
+      atLocal ? 'Health post name' : 'Health center name'
+    }: ${referringHealthCenterName(c)}`,
     patientName: c.patientName,
     patientCode: code,
     sex: c.sex,
@@ -282,7 +332,7 @@ export function buildDhToReferralPartialSummary(c: Case): string {
     patientCode: code,
     sex: c.sex,
     age: c.age,
-    treatment: c.hospitalManagementMedication?.trim() || '—',
+    treatment: districtToReferralTreatmentLine(c),
     symptoms: symptomsLine(c),
     howCame: fmtHcTransport(c.dhReferralToReferralHospitalTransport),
   });
@@ -291,11 +341,9 @@ export function buildDhToReferralPartialSummary(c: Case): string {
 /** RICH when DH escalates to referral hospital. */
 export function buildDhToReferralRichFullSummary(c: Case): string {
   const code = patientCodeDisplay(c);
-  const mg = c.hospitalManagementMedication?.trim()
-    ? c.hospitalManagementMedication.length > 240
-      ? `${c.hospitalManagementMedication.slice(0, 240)}…`
-      : c.hospitalManagementMedication
-    : '—';
+  const treatment = districtToReferralTreatmentLine(c);
+  const mg =
+    treatment.length > 240 ? `${treatment.slice(0, 240)}…` : treatment;
   const toRh = fmtHcTransport(c.dhReferralToReferralHospitalTransport);
   return buildStructuredCaseNotification({
     route: 'Dist Hsp->Referral (surveillance)',
@@ -609,7 +657,7 @@ export async function createNotificationsForNewCase(
         contentLevel: 'partial',
         recipientRoles:
           firstLine === 'LOCAL_CLINIC'
-            ? 'Local clinic staff'
+            ? 'Health Post staff'
             : 'CHEO, Head Health Center (Titulaire)',
         malariaCaseId: caseRow.id,
       },
@@ -636,10 +684,10 @@ export async function createHcFacilityCaseNotification(
   const atLocal = caseRow.chwPrimaryReferral === 'LOCAL_CLINIC';
   const msg = buildStructuredCaseNotification({
     route: atLocal
-      ? 'New registration at local clinic'
+      ? 'New registration at health post'
       : 'New registration at health center',
     facilityLine: atLocal
-      ? `Local clinic name: ${referringHealthCenterName(caseRow)}`
+      ? `Health post name: ${referringHealthCenterName(caseRow)}`
       : `Health center name: ${referringHealthCenterName(caseRow)}`,
     patientName: caseRow.patientName,
     patientCode: code,
@@ -653,7 +701,7 @@ export async function createHcFacilityCaseNotification(
   await prisma.notification.create({
     data: {
       type: 'success',
-      title: atLocal ? 'New registration at local clinic' : 'New registration at health center',
+      title: atLocal ? 'New registration at health post' : 'New registration at health center',
       message: msg,
       caseRef: caseRow.caseRef,
       targetRole: firstLineTargetRole(caseRow),
@@ -669,9 +717,14 @@ export async function createNotificationsForHcNewCase(
   senderName: string
 ) {
   const code = patientCodeDisplay(caseRow);
+  const atLocal = caseRow.chwPrimaryReferral === 'LOCAL_CLINIC';
   const dhMsg = buildStructuredCaseNotification({
-    route: 'HC walk-in / new case (to district hospital)',
-    facilityLine: `Health center name: ${referringHealthCenterName(caseRow)}`,
+    route: atLocal
+      ? 'Health Post walk-in / new case (to district hospital)'
+      : 'HC walk-in / new case (to district hospital)',
+    facilityLine: `${
+      atLocal ? 'Health post name' : 'Health center name'
+    }: ${referringHealthCenterName(caseRow)}`,
     patientName: caseRow.patientName,
     patientCode: code,
     sex: caseRow.sex,
@@ -682,8 +735,12 @@ export async function createNotificationsForHcNewCase(
     tailLines: [`Registered by: ${senderName}`],
   });
   const richMsg = buildStructuredCaseNotification({
-    route: 'HC walk-in / new case (surveillance)',
-    facilityLine: `Health center name: ${referringHealthCenterName(caseRow)}`,
+    route: atLocal
+      ? 'Health Post walk-in / new case (surveillance)'
+      : 'HC walk-in / new case (surveillance)',
+    facilityLine: `${
+      atLocal ? 'Health post name' : 'Health center name'
+    }: ${referringHealthCenterName(caseRow)}`,
     patientName: caseRow.patientName,
     patientCode: code,
     sex: caseRow.sex,
@@ -702,7 +759,9 @@ export async function createNotificationsForHcNewCase(
     data: [
       {
         type: 'alert',
-        title: 'New case at health center (referral)',
+        title: atLocal
+          ? 'New case at Health Post (referral)'
+          : 'New case at health center (referral)',
         message: dhMsg,
         caseRef: caseRow.caseRef,
         targetRole: 'HOSPITAL',
@@ -712,7 +771,9 @@ export async function createNotificationsForHcNewCase(
       },
       {
         type: 'alert',
-        title: 'New HC case (surveillance)',
+        title: atLocal
+          ? 'New Health Post case (surveillance)'
+          : 'New HC case (surveillance)',
         message: richMsg,
         caseRef: caseRow.caseRef,
         targetRole: surveillanceTargetForProvince(caseRow.province),
@@ -895,7 +956,9 @@ export async function listNotificationsForUser(
       n.phase === 'aller' &&
       n.malariaCase &&
       !n.message.includes('Phone:') &&
-      (n.title.includes('CHW') || n.recipientRoles?.includes('Local clinic'))
+      (n.title.includes('CHW') ||
+        n.recipientRoles?.includes('Local clinic') ||
+        n.recipientRoles?.includes('Health Post'))
     ) {
       return {
         ...n,
@@ -910,6 +973,7 @@ export async function listNotificationsForUser(
     if (
       !n.malariaCase ||
       (!n.message.includes('Health center name:') &&
+        !n.message.includes('Health post name:') &&
         !n.message.includes('District hosp name:'))
     ) {
       return n;
@@ -925,9 +989,13 @@ export async function listNotificationsForUser(
       n.malariaCase.district,
       viewerDistrictHospitalName
     );
+    const patchedTreatmentMessage = patchDistReferralTreatment(
+      patchedDistrictHospitalMessage,
+      districtToReferralTreatmentLine(n.malariaCase)
+    );
     return {
       ...n,
-      message: patchedDistrictHospitalMessage,
+      message: patchedTreatmentMessage,
     };
   });
   return normalized.map(mapNotificationToApi);
