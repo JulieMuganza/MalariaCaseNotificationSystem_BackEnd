@@ -1,8 +1,81 @@
 import 'dotenv/config';
 import bcrypt from 'bcryptjs';
 import { PrismaClient } from '@prisma/client';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const prisma = new PrismaClient();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const LOCAL_USERS_SEED_PATH = path.join(__dirname, 'local-users.seed.json');
+
+type SeedUserRecord = {
+  email: string;
+  passwordHash: string | null;
+  name: string;
+  phone?: string | null;
+  role:
+    | 'CHW'
+    | 'HEALTH_CENTER'
+    | 'LOCAL_CLINIC'
+    | 'HOSPITAL'
+    | 'REFERRAL_HOSPITAL'
+    | 'RICH'
+    | 'PFTH'
+    | 'SFR'
+    | 'ADMIN';
+  district: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  staffCode?: string | null;
+  emailVerified?: boolean;
+  mustChangePassword?: boolean;
+};
+
+async function seedLocalUsersFromSnapshot() {
+  try {
+    const raw = await fs.readFile(LOCAL_USERS_SEED_PATH, 'utf8');
+    const parsed = JSON.parse(raw) as SeedUserRecord[];
+    if (!Array.isArray(parsed) || parsed.length === 0) return 0;
+
+    let count = 0;
+    for (const u of parsed) {
+      if (!u.email || !u.name || !u.role || !u.district || !u.status) continue;
+      await prisma.user.upsert({
+        where: { email: u.email },
+        update: {
+          passwordHash: u.passwordHash,
+          name: u.name,
+          phone: u.phone ?? null,
+          role: u.role,
+          district: u.district,
+          status: u.status,
+          staffCode: u.staffCode ?? null,
+          emailVerified: u.emailVerified ?? true,
+          mustChangePassword: u.mustChangePassword ?? false,
+        },
+        create: {
+          email: u.email,
+          passwordHash: u.passwordHash,
+          name: u.name,
+          phone: u.phone ?? null,
+          role: u.role,
+          district: u.district,
+          status: u.status,
+          staffCode: u.staffCode ?? null,
+          emailVerified: u.emailVerified ?? true,
+          mustChangePassword: u.mustChangePassword ?? false,
+        },
+      });
+      count += 1;
+    }
+    return count;
+  } catch (error) {
+    const e = error as NodeJS.ErrnoException;
+    if (e.code === 'ENOENT') return 0;
+    throw error;
+  }
+}
 
 async function main() {
   const rounds = Number(process.env.BCRYPT_ROUNDS ?? 12);
@@ -566,6 +639,8 @@ async function main() {
     });
   }
 
+  const importedLocalUsers = await seedLocalUsersFromSnapshot();
+
   console.log('Seed complete:', {
     admin: admin.email,
     chw: chw.email,
@@ -600,6 +675,7 @@ async function main() {
       },
     },
     demoPassword: 'ChangeMe123!',
+    importedLocalUsers,
   });
 }
 

@@ -11,6 +11,8 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "prisma db seed",
+    "db:export-local-users-seed": "tsx scripts/export-local-users-for-seed.ts",
+    "db:deploy": "prisma migrate deploy && prisma db seed",
     "db:create-hospital-demo": "tsx scripts/create-hospital-demo-users.ts",
     "db:create-chw-demo": "tsx scripts/create-chw-demo-user.ts",
     "db:create-hc-demo": "tsx scripts/create-hc-demo-user.ts",
